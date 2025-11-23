@@ -223,11 +223,7 @@ def handle_not_typing():
             broadcast_typists()
 
 
-if __name__ == '__main__':
-    # Initialize and start the background thread for purging old messages.
-    purge_thread = threading.Thread(target=purge_messages_loop, daemon=True)
-    purge_thread.start()
-    
     # Run the SocketIO application
 
     socketio.run(app, host='0.0.0.0', port=5050, debug=True)
+
