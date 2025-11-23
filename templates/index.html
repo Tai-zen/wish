@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Anonymous Real-Time Chat</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.js"></script>
+<style>
+    /* Global Reset and Body */
+    body { 
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif; 
+        margin: 0; 
+        padding: 0; 
+        background-color: #f7f9fc; /* Very light, clean background */
+        color: #1c1c1e; /* Dark text for high contrast */
+        height: 100vh;
+        overflow: hidden; /* Prevent scrollbar flash on height: 100vh */
+    }
+    
+    /* Main Chat Structure */
+    #chat-container { 
+        display: flex; 
+        flex-direction: column; 
+        height: 100vh; 
+        padding-top: 40px; /* Space for the fixed status bar */
+    }
+    
+    /* Status Bar (Fixed Header) */
+    #status-bar { 
+        position: fixed; 
+        top: 0;
+        width: 100%;
+        padding: 10px 15px; 
+        background-color: #6a5acd; /* Medium purple header */
+        color: white; 
+        display: flex; 
+        justify-content: space-between; 
+        font-size: 0.9em; 
+        font-weight: 500;
+        z-index: 10;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Subtle shadow */
+    }
+
+    /* FIX: Explicitly ensure the text in the status bar is visible */
+    #status-bar span {
+        color: white !important; /* Force white color for visibility */
+        display: inline-block; /* Ensure proper rendering */
+    }
+    
+    /* Messages List */
+    #messages { 
+        flex-grow: 1; 
+        padding: 15px; 
+        list-style-type: none; 
+        margin: 0; 
+        overflow-y: auto; 
+        padding-bottom: 120px; /* Space for footer */
+    }
+    
+    #messages li { 
+        padding: 10px 15px; 
+        margin-bottom: 12px; 
+        border-radius: 20px; /* Highly rounded corners */
+        word-wrap: break-word; 
+        max-width: 80%; /* Messages don't span the full width */
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08); /* Soft shadow for depth */
+    }
+    
+    /* Message Types */
+    .system-message { 
+        background-color: #f0f4f7; 
+        color: #52667b; 
+        text-align: center; 
+        font-style: italic; 
+        border-radius: 10px;
+        margin-left: auto;
+        margin-right: auto;
+        width: fit-content;
+        max-width: 90%;
+    }
+    
+    /* My Message (Sent by the current user) */
+    .user-message { 
+        background-color: #ffffff; 
+        margin-right: auto;
+    }
+
+    /* Style for messages sent by the current user */
+    #messages li:has(.my-alias) {
+        background-color: #e0f0ff; /* Very light blue/purple tint for contrast */
+        margin-left: auto; /* Push to the right */
+        margin-right: 0;
+    }
+
+    /* Alias Styling */
+    .my-alias { 
+        font-weight: 600; 
+        color: #7b4397; /* Deep purple */
+    } 
+    .other-alias { 
+        font-weight: 600; 
+        color: #4a90e2; /* Blue-purple for contrast */
+    } 
+
+    /* Footer (Input Area) */
+    #footer { 
+        position: fixed; 
+        bottom: 0; 
+        width: 100%; 
+        background: #ffffff; 
+        border-top: 1px solid #e5e5e5; 
+        padding: 10px 15px; 
+        box-sizing: border-box; 
+        box-shadow: 0 -2px 5px rgba(0, 0, 0, 0.05); /* Shadow for lift */
+    }
+    
+    /* Input Form and Elements */
+    #form { 
+        display: flex; 
+        align-items: center;
+    }
+    #input { 
+        flex-grow: 1; 
+        padding: 12px 18px; 
+        border: 1px solid #d0d0d0; 
+        border-radius: 25px; 
+        margin-right: 10px; 
+        outline: none; 
+        transition: border-color 0.3s;
+    }
+    #input:focus {
+        border-color: #7b4397; /* Highlight on focus */
+    }
+    
+    #form button { 
+        padding: 12px 20px; 
+        background: #7b4397; /* Main purple button color */
+        color: white; 
+        border: none; 
+        border-radius: 25px; 
+        cursor: pointer; 
+        font-weight: 600;
+        transition: background-color 0.3s;
+    }
+    #form button:hover {
+        background-color: #6a3683;
+    }
+    
+    /* Typing Status */
+    #typing-status { 
+        font-style: italic; 
+        color: #7b4397; /* Use main purple for typing status */
+        padding-bottom: 5px;
+        font-size: 0.85em;
+    }
+    span#user-count {
+    padding-right: 20px;
+}
+</style>
+</head>
+<body>
+    <div id="status-bar">
+        <span id="user-alias">Connecting...</span>
+        <span id="user-count">Online users: 0</span>
+    </div>
+    <div id="chat-container">
+        <ul id="messages"></ul>
+    </div>
+    
+    <div id="footer">
+        <div id="typing-status"></div>
+        <form id="form">
+            <input id="input" autocomplete="off" autofocus placeholder="Type your message..." />
+            <button>Send</button>
+        </form>
+    </div>
+
+<script>
+    // --- GLOBAL VARIABLES AND CORE FUNCTIONS (DEFINED FIRST) ---
+
+    const socket = io();
+    const form = document.getElementById('form');
+    const input = document.getElementById('input');
+    const messages = document.getElementById('messages');
+    const userAliasSpan = document.getElementById('user-alias');
+    const userCountSpan = document.getElementById('user-count');
+    const typingStatusDiv = document.getElementById('typing-status');
+    let myAlias = '';
+    let typingTimeout = null;
+    let isTyping = false;
+
+    function scrollToBottom() {
+        // Ensure scrolling works
+        messages.scrollTop = messages.scrollHeight;
+    }
+
+    function displayMessage(alias, msg, isSystem = false) {
+    const item = document.createElement('li');
+    
+    if (isSystem) {
+        // System message path
+        item.classList.add('system-message');
+        item.textContent = msg;
+    } else {
+        // User message path
+        item.classList.add('user-message');
+        
+        const aliasSpan = document.createElement('span');
+        aliasSpan.textContent = alias;
+        
+        // Apply styling based on alias ownership
+        if (myAlias && alias === myAlias) {
+            aliasSpan.classList.add('my-alias');
+        } else {
+            aliasSpan.classList.add('other-alias');
+        }
+
+        // 1. Append the alias span
+        item.appendChild(aliasSpan);
+        // 2. Append the rest of the text as a single text node
+        item.appendChild(document.createTextNode(': ' + msg));
+    }
+    
+    // CRITICAL: Append the final list item to the messages list
+    messages.appendChild(item);
+    scrollToBottom();
+}
+
+    // --- 1. Event Handlers for UI ---
+    
+    // Handle message submission
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        if (input.value.trim()) {
+            socket.emit('send_message', { 'msg': input.value.trim() });
+            input.value = ''; 
+            handleNotTyping(); 
+        }
+    });
+
+    // Handle typing events (input change)
+   // input.addEventListener('input', function() {
+        // if (input.value.length > 0) {
+           // if (!isTyping) {
+              //  socket.emit('is_typing');
+              //  isTyping = true;
+           // }
+            
+           // clearTimeout(typingTimeout);
+           // typingTimeout = setTimeout(handleNotTyping, 3000); 
+       // } else {
+       //     handleNotTyping();
+      //  }
+  //  });
+    
+    function handleNotTyping() {
+        if (isTyping) {
+            socket.emit('not_typing');
+            isTyping = false;
+        }
+        clearTimeout(typingTimeout);
+    }
+
+    // --- 2. Socket.IO Event Listeners ---
+    
+    // Receive the unique alias assigned by the server
+    socket.on('set_alias', function(data) {
+        myAlias = data.alias;
+        userAliasSpan.textContent = `Alias: ${myAlias}`;
+        displayMessage('SERVER', `Welcome! You are ${myAlias}.`, true);
+    });
+
+    // Receive historical messages upon connecting
+    socket.on('history', function(data) {
+        // Clear current messages before loading history (important for reconnects)
+        messages.innerHTML = '';
+        data.messages.forEach(msg => {
+            displayMessage(msg.alias, msg.msg);
+        });
+        displayMessage('SERVER', '--- Past Chat History Loaded ---', true);
+    });
+
+    // Receive a new chat message
+    socket.on('message', function(data) {
+        const isSystem = data.alias === 'SERVER';
+        displayMessage(data.alias, data.msg, isSystem);
+    });
+
+    // Receive updated user count
+    socket.on('user_count', function(data) {
+        userCountSpan.textContent = `Online users: ${data.count}`;
+    });
+
+    // Receive the list of Online users who are currently typing
+    socket.on('typists', function(data) {
+        const typists = data.typists.filter(alias => alias !== myAlias);
+        
+        if (typists.length > 0) {
+            let statusText;
+            if (typists.length === 1) {
+                statusText = `${typists[0]} is typing...`;
+            } else if (typists.length === 2) {
+                statusText = `${typists[0]} and ${typists[1]} are typing...`;
+            } else {
+                statusText = `Multiple Online users are typing...`;
+            }
+            typingStatusDiv.textContent = statusText;
+        } else {
+            typingStatusDiv.textContent = '';
+        }
+    });
+    
+</script>
+</body>
+</html>
