@@ -227,4 +227,6 @@ if __name__ == '__main__':
     purge_thread.start()
     
     # Run the SocketIO application
-    socketio.run(app, host='0.0.0.0', port=5050, debug=True)
+
+    port = int(os.environ.get('PORT', 5050)) # Get PORT from environment, default to 5050
+socketio.run(app, host='0.0.0.0', port=port, debug=False)
