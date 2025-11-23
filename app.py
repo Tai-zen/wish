@@ -223,7 +223,6 @@ def handle_not_typing():
             broadcast_typists()
 
 
-    # Run the SocketIO application
 
-    socketio.run(app, host='0.0.0.0', port=5050, debug=True)
+
 
