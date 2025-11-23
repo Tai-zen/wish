@@ -1,4 +1,6 @@
 # app.py
+import eventlet # 1. Import Eventlet
+eventlet.monkey_patch()
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
 import threading
@@ -221,6 +223,7 @@ def handle_not_typing():
         if alias in typing_users:
             typing_users.remove(alias)
             broadcast_typists()
+
 
 
 
