@@ -96,7 +96,9 @@ def purge_messages_loop():
         except Exception as e:
             print(f"[PURGE ERROR] An exception occurred in the purge loop: {e}")
             time.sleep(PURGE_INTERVAL_SECONDS) 
-
+# --- Background Thread Initialization (Runs once when Gunicorn loads the app) ---
+purge_thread = threading.Thread(target=purge_messages_loop, daemon=True)
+purge_thread.start()
 # --- ROUTES (Serving the UI) ---
 @app.route('/')
 def index():
@@ -227,4 +229,5 @@ if __name__ == '__main__':
     purge_thread.start()
     
     # Run the SocketIO application
+
     socketio.run(app, host='0.0.0.0', port=5050, debug=True)
