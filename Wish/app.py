@@ -226,7 +226,10 @@ if __name__ == '__main__':
     purge_thread = threading.Thread(target=purge_messages_loop, daemon=True)
     purge_thread.start()
     
+    # Use environment variable PORT provided by Render, default to 5050 locally
+    port = int(os.environ.get('PORT', 5050)) 
+    
     # Run the SocketIO application
-
-    port = int(os.environ.get('PORT', 5050)) # Get PORT from environment, default to 5050
-socketio.run(app, host='0.0.0.0', port=port, debug=False)
+    # Set debug=False for production on Render
+    socketio.run(app, host='0.0.0.0', port=port, debug=False)
+}
