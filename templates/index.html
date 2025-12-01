@@ -185,8 +185,13 @@
         console.log(`Attempting to reconnect as ${myAlias}`);
     }
 
-    // ⭐️ PERSISTENCE: 2. Pass auth options to io()
-    const socket = io(connectOptions);
+// Old (attempts WebSocket first):
+// const socket = io(); 
+
+// New (forces HTTP Polling):
+const socket = io({
+    transports: ['polling', 'websocket']
+});
     
     const form = document.getElementById('form');
     const input = document.getElementById('input');
