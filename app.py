@@ -9,7 +9,6 @@ eventlet.monkey_patch()
 
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
-# We will still use threading.Lock, but not threading.Thread for the main loop
 import threading 
 import time
 import re 
@@ -18,7 +17,6 @@ from datetime import datetime, timedelta
 
 # --- Flask & Socket.IO Setup ---
 app = Flask(__name__)
-# WARNING: Change 'your_secret_key' to a long, random value in production
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'a-secure-random-string') 
 # Explicitly use async_mode='eventlet'
 socketio = SocketIO(app, async_mode='eventlet') 
@@ -50,7 +48,6 @@ def censor_message(msg):
     return censored_msg
 
 # --- Broadcast Functions ---
-
 def broadcast_user_count():
     with alias_lock:
         count = len(user_aliases)
@@ -63,7 +60,6 @@ def broadcast_typists():
     socketio.emit('typists', {'typists': typists_list})
 
 # --- Identity Persistence Helper ---
-
 def get_alias_or_reconnect(sid, provided_alias=None):
     global current_anon_id
     if provided_alias and provided_alias in temporary_sessions:
@@ -88,9 +84,7 @@ def purge_messages_loop():
     while True:
         try:
             print(f"[PURGE] Starting message purge check at {datetime.now().strftime('%H:%M:%S')}")
-
             cutoff_time = time.time() - HISTORY_RETENTION_SECONDS
-
             with history_lock:
                 new_history = [
                     msg for msg in chat_history if msg['timestamp'] > cutoff_time
@@ -102,17 +96,12 @@ def purge_messages_loop():
                 else:
                     print(f"[PURGE] No messages removed. History size: {len(chat_history)}")
             
-            # CRITICAL: Sleep using eventlet.sleep to yield control
-            eventlet.sleep(PURGE_INTERVAL_SECONDS) # Use eventlet.sleep instead of time.sleep
+            # Use eventlet.sleep instead of time.sleep
+            eventlet.sleep(PURGE_INTERVAL_SECONDS) 
 
         except Exception as e:
             print(f"[PURGE ERROR] An exception occurred in the purge loop: {e}")
             eventlet.sleep(PURGE_INTERVAL_SECONDS) 
-
-# 🛑 REMOVE: The thread creation/start is now moved to the setup function/block.
-# purge_thread = threading.Thread(target=purge_messages_loop, daemon=True)
-# purge_thread.start()
-
 
 # --- ROUTES (Serving the UI) ---
 @app.route('/')
@@ -120,14 +109,13 @@ def index():
     """Renders the main chatroom HTML page."""
     return render_template('index.html')
 
-# --- SOCKET.IO EVENT HANDLERS (Real-time Communication) ---
-
-# ⭐️ NEW: Use the 'before_first_request' hook to start the background task ONLY once 
-# after the app context is ready and before the first request is processed.
+# ⭐️ FIX: Use Flask's hook to start the background task safely in the worker process.
 @app.before_first_request
 def start_background_tasks():
     print("[SETUP] Starting background message purge task.")
     socketio.start_background_task(purge_messages_loop)
+
+# --- SOCKET.IO EVENT HANDLERS (Real-time Communication) ---
 
 @socketio.on('connect')
 def handle_connect(auth):
@@ -175,7 +163,6 @@ def handle_disconnect():
     emit('message', {'alias': 'SERVER', 'msg': f'{alias} has temporarily disconnected (timeout: {PERSISTENCE_TIMEOUT_SECONDS}s).'}, 
               broadcast=True, include_self=False)
 
-# --- SOCKET.IO EVENT HANDLERS (Real-time Communication) ---
 @socketio.on('send_message')
 def handle_send_message(data):
     sid = request.sid
@@ -200,7 +187,6 @@ def handle_send_message(data):
     else:
         print(f"[DEBUG] Message was empty or whitespace from {alias}.")
 
-# --- Typing Status Events ---
 @socketio.on('is_typing')
 def handle_is_typing():
     sid = request.sid
@@ -221,9 +207,5 @@ def handle_not_typing():
 
 
 if __name__ == '__main__':
-    # When running locally via 'python app.py', use the internal runner
+    # This block is used for local development, not Gunicorn deployment
     socketio.run(app, debug=True)
-    # When running via Gunicorn (deployment):
-    # The Gunicorn worker process will import the module, and the 
-    # @app.before_first_request hook will handle starting the background task 
-    # inside each worker process.
