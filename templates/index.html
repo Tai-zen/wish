@@ -77,14 +77,14 @@
         max-width: 90%;
     }
     
-    /* My Message (Sent by the current user) */
+    /* My Message (Sent by the current user - Default style for incoming self-messages) */
     .user-message { 
         background-color: #ffffff; 
         margin-right: auto;
     }
 
-    /* Style for messages sent by the current user */
-    #messages li:has(.my-alias) {
+    /* Style for messages sent by the current user (Instant Echo or Server Echo) */
+    #messages li:has(.my-alias), .self-sent {
         background-color: #e0f0ff; /* Very light blue/purple tint for contrast */
         margin-left: auto; /* Push to the right */
         margin-right: 0;
@@ -176,14 +176,24 @@
 <script>
     // --- GLOBAL VARIABLES AND CORE FUNCTIONS (DEFINED FIRST) ---
 
-    const socket = io();
+    // ⭐️ PERSISTENCE: 1. Retrieve stored alias from localStorage before connecting
+    let myAlias = localStorage.getItem('chat_alias') || ''; 
+    let connectOptions = {};
+    if (myAlias) {
+        // Prepare the auth object to send the alias token back to the server
+        connectOptions.auth = { alias: myAlias };
+        console.log(`Attempting to reconnect as ${myAlias}`);
+    }
+
+    // ⭐️ PERSISTENCE: 2. Pass auth options to io()
+    const socket = io(connectOptions);
+    
     const form = document.getElementById('form');
     const input = document.getElementById('input');
     const messages = document.getElementById('messages');
     const userAliasSpan = document.getElementById('user-alias');
     const userCountSpan = document.getElementById('user-count');
     const typingStatusDiv = document.getElementById('typing-status');
-    let myAlias = '';
     let typingTimeout = null;
     let isTyping = false;
 
@@ -193,63 +203,90 @@
     }
 
     function displayMessage(alias, msg, isSystem = false) {
-    const item = document.createElement('li');
+        const item = document.createElement('li');
+        
+        if (isSystem) {
+            // System message path
+            item.classList.add('system-message');
+            item.textContent = msg;
+        } else {
+            // User message path
+            item.classList.add('user-message');
+            
+            const aliasSpan = document.createElement('span');
+            aliasSpan.textContent = alias;
+            
+            // Apply styling based on alias ownership
+            if (myAlias && alias === myAlias) {
+                aliasSpan.classList.add('my-alias');
+            } else {
+                aliasSpan.classList.add('other-alias');
+            }
+
+            // 1. Append the alias span
+            item.appendChild(aliasSpan);
+            // 2. Append the rest of the text as a single text node
+            item.appendChild(document.createTextNode(': ' + msg));
+        }
+        
+        // CRITICAL: Append the final list item to the messages list
+        messages.appendChild(item);
+        scrollToBottom();
+    }
     
-    if (isSystem) {
-        // System message path
-        item.classList.add('system-message');
-        item.textContent = msg;
-    } else {
-        // User message path
+    // ⭐️ OPTIMIZATION: New function for instant display of *self* messages
+    function displaySelfMessage(alias, msg) {
+        const item = document.createElement('li');
         item.classList.add('user-message');
+        item.classList.add('self-sent'); // Class for instant visual cue
         
         const aliasSpan = document.createElement('span');
         aliasSpan.textContent = alias;
+        aliasSpan.classList.add('my-alias');
         
-        // Apply styling based on alias ownership
-        if (myAlias && alias === myAlias) {
-            aliasSpan.classList.add('my-alias');
-        } else {
-            aliasSpan.classList.add('other-alias');
-        }
-
-        // 1. Append the alias span
         item.appendChild(aliasSpan);
-        // 2. Append the rest of the text as a single text node
         item.appendChild(document.createTextNode(': ' + msg));
+        
+        messages.appendChild(item);
+        scrollToBottom();
     }
-    
-    // CRITICAL: Append the final list item to the messages list
-    messages.appendChild(item);
-    scrollToBottom();
-}
+
 
     // --- 1. Event Handlers for UI ---
     
     // Handle message submission
     form.addEventListener('submit', function(e) {
         e.preventDefault();
-        if (input.value.trim()) {
-            socket.emit('send_message', { 'msg': input.value.trim() });
+        const messageText = input.value.trim();
+
+        if (messageText) {
+            // ⭐️ OPTIMIZATION: Instant Client Echo
+            // Display the message immediately using our known alias
+            displaySelfMessage(myAlias, messageText); 
+            
+            // Send the message to the server for broadcast and history storage
+            socket.emit('send_message', { 'msg': messageText });
+
             input.value = ''; 
             handleNotTyping(); 
         }
     });
 
     // Handle typing events (input change)
-   // input.addEventListener('input', function() {
-        // if (input.value.length > 0) {
-           // if (!isTyping) {
-              //  socket.emit('is_typing');
-              //  isTyping = true;
-           // }
+    input.addEventListener('input', function() {
+        if (input.value.length > 0) {
+            if (!isTyping) {
+                socket.emit('is_typing');
+                isTyping = true;
+            }
             
-           // clearTimeout(typingTimeout);
-           // typingTimeout = setTimeout(handleNotTyping, 3000); 
-       // } else {
-       //     handleNotTyping();
-      //  }
-  //  });
+            clearTimeout(typingTimeout);
+            // After 3 seconds of no typing, send 'not_typing'
+            typingTimeout = setTimeout(handleNotTyping, 3000); 
+        } else {
+            handleNotTyping();
+        }
+    });
     
     function handleNotTyping() {
         if (isTyping) {
@@ -264,6 +301,9 @@
     // Receive the unique alias assigned by the server
     socket.on('set_alias', function(data) {
         myAlias = data.alias;
+        // ⭐️ PERSISTENCE: 3. Store the new/reused alias in localStorage
+        localStorage.setItem('chat_alias', myAlias); 
+
         userAliasSpan.textContent = `Alias: ${myAlias}`;
         displayMessage('SERVER', `Welcome! You are ${myAlias}.`, true);
     });
@@ -281,6 +321,15 @@
     // Receive a new chat message
     socket.on('message', function(data) {
         const isSystem = data.alias === 'SERVER';
+        
+        // ⭐️ OPTIMIZATION: Suppress self-echo from server
+        // If the message came from us AND it's not a system message (like a reconnect notice),
+        // we skip rendering it because we already rendered it instantly with displaySelfMessage().
+        if (data.alias === myAlias && !isSystem) {
+            console.log(`[ECHO SKIP] Skipping redundant echo for ${data.alias}`);
+            return; 
+        }
+
         displayMessage(data.alias, data.msg, isSystem);
     });
 
