@@ -15,7 +15,7 @@ import re
 import os
 from datetime import datetime, timedelta 
 
-# --- Flask & Socket.IO Setup ---
+# --- Flask & SocketIO Setup ---
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'a-secure-random-string') 
 # Explicitly use async_mode='eventlet'
@@ -25,6 +25,9 @@ socketio = SocketIO(app, async_mode='eventlet')
 HISTORY_RETENTION_SECONDS = 2 * 60 * 60 
 PURGE_INTERVAL_SECONDS = 5 * 60 
 PERSISTENCE_TIMEOUT_SECONDS = 60 
+
+# ⭐️ FIX: Global flag to ensure the purge loop is started once per worker process
+background_task_started = False
 
 user_aliases = {} 
 current_anon_id = 0
@@ -83,8 +86,10 @@ def purge_messages_loop():
 
     while True:
         try:
-            print(f"[PURGE] Starting message purge check at {datetime.now().strftime('%H:%M:%S')}")
+            # print(f"[PURGE] Starting message purge check at {datetime.now().strftime('%H:%M:%S')}")
+
             cutoff_time = time.time() - HISTORY_RETENTION_SECONDS
+
             with history_lock:
                 new_history = [
                     msg for msg in chat_history if msg['timestamp'] > cutoff_time
@@ -93,10 +98,10 @@ def purge_messages_loop():
                 if removed_count > 0:
                     chat_history = new_history
                     print(f"[PURGE] Removed {removed_count} old messages. History size: {len(chat_history)}")
-                else:
-                    print(f"[PURGE] No messages removed. History size: {len(chat_history)}")
+                # else:
+                #     print(f"[PURGE] No messages removed. History size: {len(chat_history)}")
             
-            # Use eventlet.sleep instead of time.sleep
+            # Use eventlet.sleep to yield control
             eventlet.sleep(PURGE_INTERVAL_SECONDS) 
 
         except Exception as e:
@@ -109,17 +114,20 @@ def index():
     """Renders the main chatroom HTML page."""
     return render_template('index.html')
 
-# ⭐️ FIX: Use Flask's hook to start the background task safely in the worker process.
-@app.before_first_request
-def start_background_tasks():
-    print("[SETUP] Starting background message purge task.")
-    socketio.start_background_task(purge_messages_loop)
-
 # --- SOCKET.IO EVENT HANDLERS (Real-time Communication) ---
 
 @socketio.on('connect')
 def handle_connect(auth):
+    global background_task_started
     sid = request.sid
+
+    # ⭐️ FIX: Start the background task only on the first connection to this worker
+    if not background_task_started:
+        print("[SETUP] Starting background message purge task (First Connection).")
+        # Use eventlet.spawn as a more direct method when eventlet is patched
+        eventlet.spawn(purge_messages_loop) 
+        background_task_started = True
+
     provided_alias = auth.get('alias') if auth else None
     
     with alias_lock:
@@ -207,5 +215,6 @@ def handle_not_typing():
 
 
 if __name__ == '__main__':
-    # This block is used for local development, not Gunicorn deployment
+    # When running locally via 'python app.py'
+    # The purge loop will start via the 'connect' handler on the first local connection.
     socketio.run(app, debug=True)
